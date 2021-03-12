@@ -1,0 +1,272 @@
+---
+title: "Exercise2"
+author: "Zonghao Li"
+date: "2021/3/11"
+output: word_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(modelr)
+library(caret)
+library(scales)
+library(FNN)
+library(class)
+library(rsample)
+library(mvtnorm)
+library(parallel)
+library(foreach)
+library(mosaic)
+library(mosaicData)
+```
+
+# Problem1-Visualization
+At first, we should recode the categorical variables in sensible, rather than alphabetical, order
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+capmetro_UT <- read.csv("E:/DOU/UT Au/Spring2021/Data Mining/capmetro_UT.csv")
+capmetro_UT = mutate(capmetro_UT,
+                     day_of_week = factor(day_of_week, levels=c("Mon", "Tue", "Wed","Thu", "Fri", "Sat", "Sun")),
+                     month = factor(month, levels=c("Sep", "Oct","Nov")))
+```
+
+```{r echo=FALSE, message=FALSE}
+d1 = capmetro_UT %>%
+  group_by(hour_of_day, day_of_week, month) %>%
+  summarize(boarding_mean = mean(boarding))
+
+ggplot(data=d1)+
+  geom_line(aes(x=hour_of_day, y=boarding_mean, color=month))+
+  facet_wrap(~day_of_week)+
+  scale_x_continuous(breaks=seq(6, 21, by=2))+
+  labs(title="Figure1. Change in averge boardings at 
+  different times of every day",
+       y="average boardings",
+       x="hour of the day")
+```
+
+Figure1 describes the change in averge boardings at different times of every day in the week, showing the different trends of conditions in September, Ocotober and November.
+When checking the dataset, I found that there was no data before 6am or after 9pm, so the data from 6am to 9pm was selected.
+
+```{r echo=FALSE, message=FALSE}
+ggplot(data=capmetro_UT)+
+  geom_point(aes(x=temperature, y=boarding, color=weekend))+
+  facet_wrap(~hour_of_day)+
+  labs(title="Figure2. The relationship between
+       boardings and temperature",
+       y="average boardings",
+       x="hour of the day")
+```
+
+(1) From Figure1, we can learn that the hour of peak boardings is broadly similar across days in the week. In particular, the boardings significantly decrease during the weekends due to not working. Furthermore, the boardings change smoothly during one day and there is no obvious peak boardings.
+(2) Then we can see that average boardings on Mondays in September look lower, compared to other days and months. I think this is caused by the Labor Holiday, which is on the first Monday in September. During that day, people will not take classes or works so the boardings falls down dramatically. 
+(3) Similarly, this figure also shows that average boardings on Weds/Thurs/Fri in November look lower. I think during that period, people will prepare for some presentations or exams since that period is close to the end of the semester.
+
+Figure2 shows the relationship between boardings and temperature at different times of the day, and it is grouped by weekend or not. In general, holding weekend and hours of the day fixed, this figure conveys that temperature does not have a significant effect on the number of UT students riding the bus. In particular, in some hours, there is a slight upward trend which means as the temperature gores up, the number of boardings will increase a bit, ignoring several outliers.
+
+
+# Problem2-Saratoga house prices
+In this problem, we will run a "horse race" (i.e. a model comparison exercise) between two model classes: linear models and KNN.
+
+## [linear model]
+```{r message=FALSE, warning=FALSE, include=FALSE}
+data("SaratogaHouses")
+# Split into training and testing sets
+saratoga_split = initial_split(SaratogaHouses, prop = 0.8)
+saratoga_train = training(saratoga_split)
+saratoga_test = testing(saratoga_split)
+	
+# Fit to the training data
+lm1 = lm(price ~ lotSize + age + livingArea + bedrooms + fireplaces + bathrooms + rooms + heating + fuel + centralAir, data=SaratogaHouses)
+lm2 = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + fireplaces + bathrooms + rooms + heating + fuel+ centralAir + bedrooms*fireplaces + bathrooms*fuel, data=saratoga_train)
+lm3 = step(lm1, scope=~(.)^2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Predictions out of sample
+# Root mean squared error
+rmse(lm1, saratoga_test)
+rmse(lm2, saratoga_test)
+rmse(lm3, saratoga_test)
+```
+After comparing the values of RMSE of three models, finally we will choose model 3 as the best linear model. In this model, price is dependent variable, and independent variables contain lotSize, age, livingArea, bedrooms, fireplaces, bathrooms, rooms, heating, fuel, centralAir, livingArea×centralAir, livingArea×fuel, bathrooms×heating, age×fuel, livingArea×fireplaces, bedrooms×fireplaces, fireplaces×centralAir, fuel×centralAir, age×centralAir, rooms×heating, lotSize×fireplaces.
+
+## [knn model]
+At first we should normalize the variables before applying KNN. In order, the k-values are: k=1, k=2, k=3, k=6, k=10, k=20, k=30.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+SaratogaHouses$normal_lotSize <- ((SaratogaHouses$lotSize)-min(SaratogaHouses$lotSize))/(max(SaratogaHouses$lotSize)-min(SaratogaHouses$lotSize))
+SaratogaHouses$normal_age <- ((SaratogaHouses$age)-min(SaratogaHouses$age))/(max(SaratogaHouses$age)-min(SaratogaHouses$age))
+SaratogaHouses$normal_landValue <- ((SaratogaHouses$landValue)-min(SaratogaHouses$landValue))/(max(SaratogaHouses$landValue)-min(SaratogaHouses$landValue))
+SaratogaHouses$normal_bedrooms <- ((SaratogaHouses$bedrooms)-min(SaratogaHouses$bedrooms))/(max(SaratogaHouses$bedrooms)-min(SaratogaHouses$bedrooms))
+SaratogaHouses$normal_fireplaces <- ((SaratogaHouses$fireplaces)-min(SaratogaHouses$fireplaces))/(max(SaratogaHouses$fireplaces)-min(SaratogaHouses$fireplaces))
+SaratogaHouses$normal_bathrooms <- ((SaratogaHouses$bathrooms)-min(SaratogaHouses$bathrooms))/(max(SaratogaHouses$bathrooms)-min(SaratogaHouses$bathrooms))
+SaratogaHouses$normal_rooms <- ((SaratogaHouses$rooms)-min(SaratogaHouses$rooms))/(max(SaratogaHouses$rooms)-min(SaratogaHouses$rooms))
+SaratogaHouses$normal_livingArea <- ((SaratogaHouses$livingArea)-min(SaratogaHouses$livingArea))/(max(SaratogaHouses$livingArea)-min(SaratogaHouses$livingArea))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+saratoga_split2 = initial_split(SaratogaHouses, prop=0.8)
+saratoga_train2 = training(saratoga_split2)
+saratoga_test2 = testing(saratoga_split2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn1 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=1)
+rmse(knn1,saratoga_test2)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn2 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=2)
+rmse(knn2,saratoga_test2)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn3 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=3)
+rmse(knn3,saratoga_test2)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn6 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=6)
+rmse(knn6,saratoga_test2)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn10 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=10)
+rmse(knn10,saratoga_test2)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn20 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=20)
+rmse(knn20,saratoga_test2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn30 = knnreg(price ~ normal_lotSize + normal_age + normal_livingArea + normal_landValue + normal_rooms + normal_bedrooms + normal_fireplaces + normal_bathrooms, data=saratoga_train2, k=30)
+rmse(knn30,saratoga_test2)
+```
+After trying several values of k, we can approximately get that the out-of-sample mean-squared error value of knn model is larger than the linear model in the first part. So for this project, I recommend using the linear model to predict market values better and set prices more properly.
+
+
+# Problem3-Classification and retrospective sampling
+In problem3, we will focus on helping the bank predict whether a borrower is likely to default on a loan.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+german_credit <- read.csv("E:/DOU/UT Au/Spring2021/Data Mining/ECO395M-master/german_credit.csv")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+glm.fit=glm(Default ~ duration + amount + installment + age + history + purpose + foreign, data=german_credit, family=binomial)
+summary(glm.fit)
+```
+We can notice that history variable has been divided into two variables--historypoor and historyterrible. And the estimated values are negative and gtatistically significant at 1% level, which show that the poor credit history would reduce the probability of default in fact. From my point of view, this result may caused by the different level of loans among groups of people with different credit history. The bank may send out some high-risk loan to people who have good credit history, but it may be more possible  to make these people to default than people with poorer credit.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data=german_credit)+
+geom_col(mapping=aes(x=history, y=Default))+
+labs(x="credit history", y="default probability") 
+```
+From the plot we can learn that people with poor credit history accounts for a large proportion, which means these people will more possible to default the loan. The probabilities of default among people with good credit or terrible credit are simliar and low.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+glm.probs=predict(glm.fit, type="response")
+glm.probs[1:10]
+
+glm.pred <- ifelse(glm.probs > 0.2, "high", "low")
+head(glm.pred)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+table(glm.pred, german_credit$Default)
+```
+```{r message=FALSE, warning=FALSE, include=FALSE}
+(390+36)/1000
+```
+
+From the table above, we can calculate the probability of predicting correctly to be (390+36)/1000=0.426. This is a not too bad prediction probability, but the bank should take some ways to improve the predictive performance. For me, we can further use the knn method but its classification principle is different from the method above. Furthermore, random forest may be a possibly good way to make the prediction for bank.
+
+
+# Question4-Children and hotel reservations
+The goal of this problem is to build a predictive model for whether a hotel booking will have children on it, since parents often enter the reservation exclusively for themselves and forget to include their children on the form when booking the hotel.
+
+## Model building
+In this part, we need to compare several models below.
+
+At first, split our 'hotels_dev' data set into training and testing sets.
+
+```{r echo=FALSE, message=FALSE}
+hotels_dev <- read.csv("E:/DOU/UT Au/Spring2021/Data Mining/ECO395M-master/hotels_dev.csv")
+hotel_split1 = initial_split(hotels_dev, prop = 0.8)
+hotel_train1 = training(hotel_split1)
+hotel_test1 = testing(hotel_split1)
+```
+### [baseline1]
+The value of RMSE of baseline1 is:
+```{r echo=FALSE, message=FALSE}
+set.seed(42)
+baseline1=lm(children~market_segment+adults+customer_type+is_repeated_guest, data=hotel_train1)
+rmse(baseline1, hotel_test1)
+```
+### [baseline2]
+The value of RMSE of baseline2 is:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(42)
+baseline2=lm(children~(.-arrival_date)^2, data=hotel_train1)
+rmse(baseline2, hotel_test1)
+```
+
+Next we will try to find a best linear model. The value of RMSE of this model is:
+```{r message=FALSE, include=FALSE}
+set.seed(42)
+lm_step = step(baseline1, 
+               scope=~(.)^2)
+coef(lm_step)
+```
+```{r echo=FALSE, message=FALSE}
+rmse(lm_step, hotel_test1)
+```
+From the model buildings and calculations above, we can learn that the best linear model in fact should be baseline2. So in the next section we will apply the baseline2 to analyze problems.
+
+## Model validation: step 1
+Note: In two steps of model validation, we use only 'hotel_val' dataset.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(foreach)
+hotels_val <- read.csv("E:/DOU/UT Au/Spring2021/Data Mining/ECO395M-master/hotels_val.csv")
+set.seed(42)
+phat_test = predict(baseline2, hotels_val, type='response')
+
+thresh_grid = seq(0.95, 0.05, by=-0.005)
+roc_curve = foreach(thresh = thresh_grid, .combine='rbind') %do% {
+  yhat_test = ifelse(phat_test >= thresh, 1, 0)
+### FPR, TPR for linear model
+confusion_out_linear = table(y = hotels_val$children, yhat = yhat_test)
+out_lin = data.frame(model = "linear",
+                     TPR = confusion_out_linear[2,2]/sum(hotels_val$children==1),
+                     FPR = confusion_out_linear[1,2]/sum(hotels_val$children==0))
+  rbind(out_lin)
+} %>% as.data.frame()
+
+ggplot(roc_curve) + 
+  geom_line(aes(x=FPR, y=TPR, color=model)) + 
+  labs(title="ROC curve", y="TPR(sensitivity)", x="FPR(1-specificity)") +
+  theme_bw(base_size = 10) 
+```
+The ROC curve is plotted above.
+
+## Model validation: step 2
+This time we need to create 20 folds of 'hotels_val'.
+```{r echo=FALSE, message=FALSE}
+set.seed(42)
+K_fold=20
+
+hotels_val = hotels_val %>%
+  mutate(fold=rep(1:K_fold, length=nrow(hotels_val)) %>% sample)
+
+hotels_val = hotels_val %>%
+  mutate(yhat_test=ifelse(phat_test>0.2,1,0))
+
+table=hotels_val %>%
+  group_by(fold) %>%
+  summarise(yhat=sum(yhat_test==1),y=sum(children==1))
+table
+```
+From the table above, in particular, the differences between yhat and y range from 1 to 11. Some of the predicted values of number of children may differ a little greatly from the actural values, but overall, this prediction is fine.
+
+
+
+
